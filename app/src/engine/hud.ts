@@ -19,16 +19,23 @@ export interface HudState {
 export class Hud {
   layer = new Layer2D();
   private ink = false;
+  /** The texture already holds an empty layer: frames with nothing to draw (most of them) skip the upload. */
+  private blank = false;
   constructor(public captions: Caption[]) {}
 
   draw(t: number, st: HudState) {
     const L = this.layer;
+    const marks = st.frame > 0.001;
+    if (st.opacity <= 0.001 || !(marks || this.captions.some((k) => t >= k.start && t < k.end))) {
+      if (!this.blank) { L.clear(); L.upload(); this.blank = true; }
+      return L.texture;
+    }
+    this.blank = false;
     L.clear();
     const c = L.ctx;
-    if (st.opacity <= 0.001) return L.upload();
     c.globalAlpha = st.opacity;
     this.ink = st.paper > 0.5;
-    if (st.frame > 0.001) this.cropMarks(c, st.frame);
+    if (marks) this.cropMarks(c, st.frame);
     this.caption(c, t);
     return L.upload();
   }

@@ -68,7 +68,7 @@ Rules:
 - `ctx.params` holds the timeline entry's params (one module can serve several entries); `ctx.start/ctx.end` its window; `f.lt`/`f.p` local time/progress.
 - Transitions: by default the engine crossfades overlapping entries. For custom transitions set `handlesTransition = true` and composite `f.under` (the previous scene's frame) yourself using `f.tin` (0→1 over the overlap). Most cuts should be hard cuts on downbeats (no overlap) — that's the default when windows touch.
 - Post overrides you can return: `exposure, bloom, bloomThreshold, bloomKnee, bloomRadius, halation (carmine), ca, grain, vignette, hud (HUD opacity), frame (crop marks), paper, fade, flash, shake:[x,y], zoom, invert`. Defaults in `src/engine/post.ts`.
-- Performance: aim for < 25 ms/frame. Canvas2D layers cost ~2–4 ms to upload each; don't use more than 2–3 per scene. Precompute in `init()`.
+- Performance: aim for < 25 ms/frame. Canvas2D layers cost under 1 ms to upload each through `Layer2D` (it uploads the canvas as RGBA8 and converts to sRGB in one pass; uploading a canvas straight into an sRGB texture costs ~16 ms in Chrome on Windows, so don't make your own sRGB `CanvasTexture` for per-frame content); don't use more than 2–3 per scene. Precompute in `init()`.
 - Don't edit files outside your scene files (and your own helper files named `scenes/<name>-*.ts`). Engine / motif / timeline changes: don't make them; report in your final message what you'd need.
 
 ## Toolbox

@@ -5,7 +5,7 @@ import type * as THREE from 'three';
 import type { AudioData, AudioSample } from './audio';
 import type { Lyrics } from './lyrics';
 import type { SpectrumTextures } from './spectrum';
-import type { Compositor } from './gl';
+import { Layer2D, type Compositor } from './gl';
 import type { PostParams } from './post';
 
 export interface SceneCtx {
@@ -79,7 +79,10 @@ export abstract class Scene {
   /** Render into `out` (HalfFloat, linear HDR). Must fully overwrite/clear it. Return post-processing overrides. */
   abstract render(f: Frame, out: THREE.WebGLRenderTarget): PostOverrides | void;
 
-  dispose(): void {}
+  /** Free GPU resources. The default frees the Layer2D fields; override (and call super) to free more. */
+  dispose(): void {
+    for (const v of Object.values(this)) if (v instanceof Layer2D) v.dispose();
+  }
 }
 
 export type SceneClass = new (ctx: SceneCtx) => Scene;

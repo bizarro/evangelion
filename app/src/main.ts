@@ -121,10 +121,12 @@ function setupPlayer() {
   let playing = false;
   let loop: [number, number] | null = null;
   let lastAudioT = 0, lastPerf = 0;
-  const seek = (x: number) => { t = Math.max(0, Math.min(engine.duration - 0.001, x)); audio.currentTime = t; };
+  let skipWarm = false; // any seek or play ends the warm-up early
+  const seek = (x: number) => { skipWarm = true; t = Math.max(0, Math.min(engine.duration - 0.001, x)); audio.currentTime = t; };
   seek(t);
+  skipWarm = false;
 
-  const toggle = () => { playing = !playing; if (playing) { audio.currentTime = t; audio.play(); } else audio.pause(); };
+  const toggle = () => { skipWarm = true; playing = !playing; if (playing) { audio.currentTime = t; audio.play(); } else audio.pause(); };
   canvas.onclick = toggle;
   scrub.oninput = () => seek(parseFloat(scrub.value));
   window.addEventListener('keydown', (ev) => {
@@ -162,7 +164,28 @@ function setupPlayer() {
     info.textContent = `${t.toFixed(2)}s  beat ${engine.audio.beatAt(t).toFixed(2)}  bar ${engine.audio.barAt(t).toFixed(2)}  [${e?.id ?? '—'}]  ${sec.name} ${(sec.p * 100).toFixed(0)}%  ${fps.toFixed(0)}fps${loop ? '  LOOP' : ''}`;
     requestAnimationFrame(tick);
   };
-  requestAnimationFrame(tick);
+
+  // Warm-up. The first frame a plate (or one of its passes) renders compiles its shaders and rasterises its
+  // glyphs: 30-150 ms, a visible hitch at every plate change the first time through. So before the player
+  // starts, render the song off screen once, sparsely (a frame every half second, and every tenth of a
+  // second through each plate's first second, where most of its parts first appear: ~2 s in all), in
+  // slices so the page stays responsive. Seeking or pressing play skips the rest.
+  const warmUp = async () => {
+    engine.render(t, 1 / 60); // show the first frame meanwhile
+    const times: number[] = [];
+    for (const e of TIMELINE) for (let k = 0; k <= 10; k++) times.push(Math.min(e.start + k * 0.1, engine.duration - 0.001));
+    for (let x = 0; x < engine.duration; x += 0.5) times.push(x);
+    times.sort((a, b) => a - b);
+    let slice = performance.now();
+    for (let i = 0; i < times.length && !skipWarm; i++) {
+      engine.render(times[i]!, 1 / 60, false);
+      if (performance.now() - slice < 10) continue;
+      info.textContent = `warming up ${Math.round((100 * i) / times.length)}%  (click to skip)`;
+      await new Promise(requestAnimationFrame);
+      slice = performance.now();
+    }
+  };
+  warmUp().finally(() => requestAnimationFrame(tick));
 
   // Vite HMR: re-instantiate scenes whose module changed
   if (import.meta.hot) {
