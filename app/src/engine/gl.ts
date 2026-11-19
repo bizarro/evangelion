@@ -178,27 +178,64 @@ export function scaleContext2D(c: CanvasRenderingContext2D, s: number) {
   return c;
 }
 
+let layerRenderer: THREE.WebGLRenderer | null = null;
+/** The renderer Layer2D.upload() copies through (the engine registers its own). */
+export function setLayerRenderer(renderer: THREE.WebGLRenderer) { layerRenderer = renderer; }
+
+let layerCopy: FSPass | null = null;
+/** Raw canvas bytes (sRGB-encoded, in an RGBA8 texture) -> linear; the sRGB target encodes them back on write. */
+function layerCopyPass() {
+  return layerCopy ??= new FSPass(/* glsl */ `
+    uniform sampler2D src;
+    void main() {
+      vec4 c = texelFetch(src, ivec2(gl_FragCoord.xy), 0);
+      fragColor = vec4(toLinear(c.rgb), c.a);
+    }`, { src: { value: null } });
+}
+
 /**
  * A 1920x1080 (logical) Canvas2D surface uploaded as an sRGB texture (decoded to linear when sampled).
  * Draw in CSS pixels with origin top-left. Call `upload()` after drawing each frame.
  * The backing canvas is SCALE times larger (`canvas.width` = w*SCALE); the context is pre-scaled
  * (see scaleContext2D), so drawing code works in logical px at every output scale.
+ *
+ * The canvas is not uploaded into the sRGB texture directly: Chrome copies a GPU canvas into an RGBA8
+ * texture on the GPU (~0.5 ms at 1080p) but has no such path for SRGB8_ALPHA8, where the same upload
+ * takes ~16 ms, a whole 60 fps frame per layer. So the canvas goes into a plain RGBA8 texture and
+ * one 1:1 pass copies that into the sRGB texture scenes sample, for under a millisecond. (The texels are
+ * the same except where alpha is partial: there the GPU copy rounds the un-premultiplied colour
+ * differently from the old upload, by one 8-bit step.)
  */
 export class Layer2D {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
-  texture: THREE.CanvasTexture;
+  /** The canvas as uploaded: its sRGB bytes, undecoded. */
+  private raw: THREE.CanvasTexture;
+  private rt: THREE.WebGLRenderTarget;
+  /** The layer as scenes sample it: sRGB, decoded to linear by the sampler. Stable for the layer's lifetime. */
+  texture: THREE.Texture;
   /** `scale`: backing px per drawing px (default SCALE; pass 1 for a deliberately low-res layer, e.g. a soft glow). */
   constructor(public w = W, public h = H, scale = SCALE) {
     this.canvas = document.createElement('canvas');
     this.canvas.width = Math.round(w * scale);
     this.canvas.height = Math.round(h * scale);
     this.ctx = scaleContext2D(this.canvas.getContext('2d')!, scale);
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.minFilter = THREE.LinearFilter;
-    this.texture.generateMipmaps = false;
-    this.texture.flipY = true;
+    this.raw = new THREE.CanvasTexture(this.canvas);
+    this.raw.colorSpace = THREE.NoColorSpace;
+    this.raw.minFilter = THREE.NearestFilter;
+    this.raw.magFilter = THREE.NearestFilter;
+    this.raw.generateMipmaps = false;
+    this.raw.flipY = true;
+    this.rt = new THREE.WebGLRenderTarget(this.canvas.width, this.canvas.height, {
+      type: THREE.UnsignedByteType,
+      format: THREE.RGBAFormat,
+      colorSpace: THREE.SRGBColorSpace,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      generateMipmaps: false,
+      depthBuffer: false,
+    });
+    this.texture = this.rt.texture;
   }
   clear(color?: string) {
     const c = this.ctx;
@@ -210,7 +247,29 @@ export class Layer2D {
     if (color) { c.fillStyle = color; c.fillRect(0, 0, this.w, this.h); }
     else c.clearRect(0, 0, this.w, this.h);
   }
-  upload() { this.texture.needsUpdate = true; return this.texture; }
+  /**
+   * Push the canvas to the GPU now and return the texture. The renderer's render target (with its cube
+   * face and mip level) is bound again afterwards; like any setRenderTarget, that puts the viewport and
+   * scissor back to that target's own, so set a custom viewport after uploading, not before.
+   */
+  upload() {
+    const r = layerRenderer;
+    if (!r) throw new Error('Layer2D.upload() before setLayerRenderer()');
+    this.raw.needsUpdate = true;
+    const pass = layerCopyPass();
+    const prev = r.getRenderTarget(), face = r.getActiveCubeFace(), mip = r.getActiveMipmapLevel();
+    pass.u.src!.value = this.raw;
+    try { pass.render(r, this.rt); } finally {
+      pass.u.src!.value = null;
+      r.setRenderTarget(prev, face, mip);
+    }
+    return this.texture;
+  }
+  /** Free the layer's GPU resources (the scene base class does this for a scene's layers). */
+  dispose() {
+    this.raw.dispose();
+    this.rt.dispose();
+  }
 }
 
 /** Clear a render target to a linear colour. */

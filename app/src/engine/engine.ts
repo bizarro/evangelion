@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { AudioData } from './audio';
 import { Lyrics } from './lyrics';
-import { Compositor, FSPass, W, H, PW, PH, SCALE, SS_TAP, makeRT, clearRT } from './gl';
+import { Compositor, FSPass, W, H, PW, PH, SCALE, SS_TAP, makeRT, clearRT, setLayerRenderer } from './gl';
 import { DEFAULT_POST, Post, SHOULDER_GLSL, type PostParams } from './post';
 import { Hud, type Caption } from './hud';
 import type { Frame, Scene, SceneClass, SceneCtx, PostOverrides } from './scene';
@@ -91,6 +91,7 @@ export class Engine {
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(PW, PH, false);
     this.renderer.autoClear = false;
+    setLayerRenderer(this.renderer);
     this.blit = new FSPass(`uniform sampler2D src; void main(){ fragColor = texture(src, vUv); }`, { src: { value: null } });
     this.xfade = new FSPass(`uniform sampler2D a; uniform sampler2D b; uniform float k;
       void main(){ fragColor = mix(texture(a, vUv), texture(b, vUv), k); }`, { a: { value: null }, b: { value: null }, k: { value: 0 } });
